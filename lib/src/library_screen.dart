@@ -145,7 +145,26 @@ class _LibraryScreenState extends State<LibraryScreen> {
         actions: [
           IconButton(icon: const Icon(Icons.refresh), onPressed: _rescan),
           IconButton(icon: const Icon(Icons.settings), onPressed: _changeRoot),
-          IconButton(icon: const Icon(Icons.link_off), onPressed: widget.onLogout),
+          IconButton(
+            icon: const Icon(Icons.link_off),
+            onPressed: () async {
+              final ok = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('Від\'єднати пристрій?'),
+                  content: Text('Токен збережено у Keystore, сервер ${widget.client.base}.\n'
+                      'Щоб знову слухати, знадобиться новий pairing-код.'),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('Скасувати')),
+                    TextButton(onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text('Від\'єднати')),
+                  ],
+                ),
+              );
+              if (ok == true) widget.onLogout();
+            },
+          ),
         ],
       ),
       body: Column(
