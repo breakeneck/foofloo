@@ -103,11 +103,13 @@ class _FooFloAppState extends State<FooFloApp> {
       home: FutureBuilder<FooFloApiClient?>(
         future: _session,
         builder: (context, snap) {
-          if (!snap.hasData) {
-            Diag.instance.log('builder: waiting (connectionState=${snap.connectionState})');
+          if (snap.connectionState != ConnectionState.done) {
+            Diag.instance.log('builder: waiting (${snap.connectionState})');
             return const Scaffold(
                 body: Center(child: CircularProgressIndicator()));
           }
+          // snap.data == null means "no saved session" — hasData is false
+          // for null, so never gate on hasData here.
           _ready = true;
           final client = snap.data;
           if (client == null) {
