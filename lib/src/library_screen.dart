@@ -20,8 +20,8 @@ class LibraryScreen extends StatefulWidget {
 class _LibraryScreenState extends State<LibraryScreen> {
   final _db = LibraryDb();
   final _player = AudioPlayer();
-  String _root = '/home/ha/hdd/media/Music';
-  String _dir = '/home/ha/hdd/media/Music';
+  String _root = '/home/server/hdd/media/Music';
+  String _dir = '/home/server/hdd/media/Music';
   List<Map> _tracks = [];
   List<String> _dirs = [];
   String _scanState = 'idle';
