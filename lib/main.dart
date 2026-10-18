@@ -2,13 +2,26 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:just_audio_background/just_audio_background.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'src/api_client.dart';
 import 'src/diagnostics.dart';
 import 'src/library_screen.dart';
 import 'src/pairing_screen.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  try {
+    await JustAudioBackground.init(
+      androidNotificationChannelId: 'ua.lutsk.foofloo.channel.audio',
+      androidNotificationChannelName: 'FooFlo',
+      androidNotificationOngoing: true,
+    );
+  } catch (e) {
+    // background init must never block startup
+    debugPrint('JustAudioBackground init failed: $e');
+  }
   Diag.runGuarded(() {
     Diag.instance.log('main() started');
     runApp(const FooFloApp());
@@ -27,6 +40,7 @@ class _FooFloAppState extends State<FooFloApp> {
   Future<FooFloApiClient?> _session = Future.value(null);
   bool _ready = false;
   Timer? _watchdog;
+  ThemeMode _themeMode = ThemeMode.dark;
 
   @override
   void initState() {
@@ -34,6 +48,12 @@ class _FooFloAppState extends State<FooFloApp> {
     Diag.instance.log('app init');
     Diag.instance.deviceNameFuture();
     _session = _restore();
+    SharedPreferences.getInstance().then((p) {
+      final t = p.getString('theme');
+      final mode = ThemeMode.values.firstWhere(
+          (m) => m.name == t, orElse: () => ThemeMode.dark);
+      setState(() => _themeMode = mode);
+    });
     // if nothing became ready in 8s, ship whatever we have to the collector
     _watchdog = Timer(const Duration(seconds: 8), () {
       if (!_ready) Diag.instance.flush(reason: 'startup stalled 8s');
@@ -90,16 +110,20 @@ class _FooFloAppState extends State<FooFloApp> {
     });
   }
 
+  ThemeData _theme(Brightness b) => ThemeData(
+        brightness: b,
+        colorSchemeSeed: const Color(0xFF7C4DFF),
+        useMaterial3: true,
+      );
+
   @override
   Widget build(BuildContext context) {
     Diag.instance.log('build()');
     return MaterialApp(
       title: 'FooFlo',
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        colorSchemeSeed: const Color(0xFF7C4DFF),
-        useMaterial3: true,
-      ),
+      theme: _theme(Brightness.light),
+      darkTheme: _theme(Brightness.dark),
+      themeMode: _themeMode,
       home: FutureBuilder<FooFloApiClient?>(
         future: _session,
         builder: (context, snap) {
@@ -118,7 +142,12 @@ class _FooFloAppState extends State<FooFloApp> {
           }
           Diag.instance.log('builder: library screen');
           Diag.instance.flush(reason: 'library reached');
-          return LibraryScreen(client: client, onLogout: _logout);
+          return LibraryScreen(
+            client: client,
+            onLogout: _logout,
+            themeMode: _themeMode,
+            onThemeChanged: (m) => setState(() => _themeMode = m),
+          );
         },
       ),
     );

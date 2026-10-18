@@ -1,18 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:just_audio_background/just_audio_background.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api_client.dart';
 import 'diagnostics.dart';
 import 'library_db.dart';
+import 'settings_screen.dart';
 
-/// Desktop-like layout: left folder tree (hidden behind a slide-in drawer),
-/// main list shows ALL tracks under the selected dir recursively, grouped by
-/// last folder — same as FooQt's playlist with dir header rows.
+/// Desktop-like layout: folder tree in a slide-in drawer, main list shows ALL
+/// tracks under the selected dir recursively, grouped by folder (like FooQt's
+/// dir header rows). Header shows the selected folder.
 class LibraryScreen extends StatefulWidget {
   final FooFloApiClient client;
   final VoidCallback onLogout;
+  final ThemeMode themeMode;
+  final ValueChanged<ThemeMode> onThemeChanged;
   const LibraryScreen(
-      {super.key, required this.client, required this.onLogout});
+      {super.key,
+      required this.client,
+      required this.onLogout,
+      required this.themeMode,
+      required this.onThemeChanged});
 
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();
@@ -27,7 +36,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
   List<Map> _tracks = [];
   String _scanState = 'idle';
   bool _scanning = false;
+  bool _searchVisible = false;
   String _query = '';
+  final _searchCtrl = TextEditingController();
+  int _treeRev = 0; // bump to refresh the drawer tree after a rescan
 
   @override
   void initState() {
@@ -38,6 +50,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   @override
   void dispose() {
     _player.dispose();
+    _searchCtrl.dispose();
     widget.client.dispose();
     super.dispose();
   }
@@ -45,9 +58,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Future<void> _boot() async {
     Diag.instance.log('library boot: opening db');
     await _db.open();
+    final prefs = await SharedPreferences.getInstance();
+    final savedRoot = prefs.getString('root');
+    if (savedRoot != null && savedRoot.isNotEmpty) _root = savedRoot;
+    _dir = _root;
     Diag.instance.log('db opened, rescanning');
     await _rescan();
-    await _navigate(_root);
+    await _navigate(_dir);
   }
 
   Future<void> _rescan() async {
@@ -82,7 +99,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
       if (mounted) setState(() => _scanState = 'scan failed: $e');
       Diag.instance.flush(reason: 'scan error');
     } finally {
-      if (mounted) setState(() => _scanning = false);
+      if (mounted) {
+        setState(() {
+          _scanning = false;
+          _treeRev++;
+        });
+      }
     }
   }
 
@@ -101,7 +123,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
       _dir = dir;
       _tracks = tracks;
     });
-    // close the drawer after picking a folder
     if (_scaffoldKey.currentState?.isDrawerOpen == true) {
       Navigator.pop(context);
     }
@@ -109,10 +130,19 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Future<void> _play(Map track) async {
     final uri = widget.client.fileUri(track['path'] as String);
+    final title = track['title'] ?? track['path'].toString().split('/').last;
     Diag.instance.log('play: ${track['path']}');
     try {
-      await _player.setAudioSource(
-          AudioSource.uri(uri, headers: widget.client.audioHeaders));
+      await _player.setAudioSource(AudioSource.uri(
+        uri,
+        headers: widget.client.audioHeaders,
+        tag: MediaItem(
+          id: track['path'] as String,
+          title: title.toString(),
+          artist: (track['artist'] ?? '').toString(),
+          album: (track['album'] ?? '').toString(),
+        ),
+      ));
       await _player.play();
       Diag.instance.log('play: started ok');
     } catch (e) {
@@ -130,27 +160,39 @@ class _LibraryScreenState extends State<LibraryScreen> {
     return dir.split('/').last;
   }
 
-  void _changeRoot() {
-    final ctrl = TextEditingController(text: _root);
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Music root on server'),
-        content: TextField(controller: ctrl, autocorrect: false),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              _root = ctrl.text.trim();
-              _dir = _root;
-              _rescan();
-            },
-            child: const Text('Rescan'),
-          ),
-        ],
+  void _openSettings() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (ctx) => SettingsScreen(
+          client: widget.client,
+          root: _root,
+          scanState: _scanState,
+          themeMode: widget.themeMode,
+          onThemeChanged: widget.onThemeChanged,
+          onRescan: () {
+            Navigator.pop(context);
+            _rescan();
+          },
+          onRootChanged: (r) {
+            Navigator.pop(context);
+            _root = r;
+            _dir = r;
+            _rescan();
+          },
+          onLogout: widget.onLogout,
+        ),
       ),
     );
+  }
+
+  void _toggleSearch() {
+    setState(() => _searchVisible = !_searchVisible);
+    if (!_searchVisible) {
+      _searchCtrl.clear();
+      _query = '';
+      _navigate(_dir);
+    }
   }
 
   @override
@@ -161,56 +203,37 @@ class _LibraryScreenState extends State<LibraryScreen> {
         db: _db,
         root: _root,
         selected: _dir,
+        rev: _treeRev,
         onSelect: _navigate,
       ),
       appBar: AppBar(
-        title: Text(_dir == _root ? 'Library' : _shortDir('$_dir/x')),
+        title: Text(_dir == _root ? _root.split('/').last : _shortDir('$_dir/x'),
+            overflow: TextOverflow.ellipsis),
         actions: [
-          IconButton(icon: const Icon(Icons.refresh), onPressed: _rescan),
-          IconButton(icon: const Icon(Icons.settings), onPressed: _changeRoot),
           IconButton(
-            icon: const Icon(Icons.link_off),
-            onPressed: () async {
-              final ok = await showDialog<bool>(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  title: const Text('Від\'єднати пристрій?'),
-                  content: Text('Токен збережено у Keystore, сервер ${widget.client.base}.\n'
-                      'Щоб знову слухати, знадобиться новий pairing-код.'),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(ctx, false),
-                        child: const Text('Скасувати')),
-                    TextButton(onPressed: () => Navigator.pop(ctx, true),
-                        child: const Text('Від\'єднати')),
-                  ],
-                ),
-              );
-              if (ok == true) widget.onLogout();
-            },
-          ),
+              icon: Icon(_searchVisible ? Icons.search_off : Icons.search),
+              onPressed: _toggleSearch),
+          IconButton(
+              icon: const Icon(Icons.settings_outlined),
+              onPressed: _openSettings),
         ],
       ),
       body: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-            child: Row(children: [
-              IconButton(
-                icon: const Icon(Icons.menu),
-                onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+          if (_searchVisible)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+              child: TextField(
+                controller: _searchCtrl,
+                autofocus: true,
+                onChanged: (v) {
+                  _query = v.trim();
+                  _navigate(_dir);
+                },
+                decoration: const InputDecoration(
+                    hintText: 'Пошук у папці…', isDense: true),
               ),
-              Expanded(
-                child: TextField(
-                  onChanged: (v) {
-                    _query = v.trim();
-                    _navigate(_dir);
-                  },
-                  decoration: const InputDecoration(
-                      hintText: 'Пошук…', isDense: true),
-                ),
-              ),
-            ]),
-          ),
+            ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Align(
@@ -224,10 +247,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
               itemCount: _tracks.length + _headerCount(),
               itemBuilder: (context, i) {
                 final headers = _headerIndices();
-                // shift index past header rows
                 int t = i;
                 for (final h in headers) {
-                  if (t == h) return _dirHeader(_shortDir(_tracks[t]['path'] as String));
+                  if (t == h) {
+                    return _dirHeader(
+                        _shortDir(_tracks[t]['path'] as String));
+                  }
                   if (t > h) t--;
                 }
                 final track = _tracks[t];
@@ -282,17 +307,20 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 }
 
-/// Slide-in folder tree, desktop-style: full hierarchy under the root,
-/// folders with no tracks in their subtree are hidden.
+/// Slide-in folder tree: tap folder name = select it (main list shows all
+/// tracks under it); tap the arrow = expand/collapse subtree. Folders without
+/// tracks in their subtree are hidden, like the desktop client.
 class _FolderTree extends StatefulWidget {
   final LibraryDb db;
   final String root;
   final String selected;
+  final int rev;
   final ValueChanged<String> onSelect;
   const _FolderTree(
       {required this.db,
       required this.root,
       required this.selected,
+      required this.rev,
       required this.onSelect});
 
   @override
@@ -300,41 +328,33 @@ class _FolderTree extends StatefulWidget {
 }
 
 class _FolderTreeState extends State<_FolderTree> {
-  late final Future<List<String>> _rootsFuture = _loadRoots();
+  late Future<List<String>> _rootsFuture = _loadVisible(widget.root);
 
-  Future<List<String>> _loadRoots() async {
-    final subs = await widget.db.subDirs(widget.root);
-    final visible = <String>[];
-    for (final d in subs) {
-      if (await widget.db.countUnder(d) > 0) visible.add(d);
+  @override
+  void didUpdateWidget(covariant _FolderTree old) {
+    super.didUpdateWidget(old);
+    if (widget.rev != old.rev) {
+      _rootsFuture = _loadVisible(widget.root);
     }
-    return visible;
   }
 
-  Widget _node(String path) {
-    final name = path.split('/').last;
-    return FutureBuilder<List<String>>(
-      future: widget.db.subDirs(path).then((subs) async {
-        final vis = <String>[];
-        for (final d in subs) {
-          if (await widget.db.countUnder(d) > 0) vis.add(d);
-        }
-        return vis;
-      }),
-      builder: (context, snap) {
-        final kids = snap.data ?? <String>[];
-        return ExpansionTile(
-          key: PageStorageKey(path),
-          leading: const Icon(Icons.folder_outlined, size: 20),
-          title: Text(name, overflow: TextOverflow.ellipsis),
-          backgroundColor:
-              widget.selected == path ? Colors.white12 : null,
-          onExpansionChanged: (_) {},
-          children: kids.map(_node).toList(),
-        );
-      },
-    );
+  Future<List<String>> _loadVisible(String dir) async {
+    final subs = await widget.db.subDirs(dir);
+    final vis = <String>[];
+    for (final d in subs) {
+      if (await widget.db.countUnder(d) > 0) vis.add(d);
+    }
+    return vis;
   }
+
+  Widget _node(String path) => _TreeNode(
+        key: PageStorageKey(path),
+        db: widget.db,
+        path: path,
+        selected: widget.selected,
+        onSelect: widget.onSelect,
+        loadVisible: _loadVisible,
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -347,6 +367,7 @@ class _FolderTreeState extends State<_FolderTree> {
               title: Text(widget.root.split('/').last,
                   style: const TextStyle(fontWeight: FontWeight.bold)),
               selected: widget.selected == widget.root,
+              selectedTileColor: Colors.white12,
               onTap: () => widget.onSelect(widget.root),
             ),
             const Divider(height: 1),
@@ -355,7 +376,8 @@ class _FolderTreeState extends State<_FolderTree> {
                 future: _rootsFuture,
                 builder: (context, snap) {
                   if (!snap.hasData) {
-                    return const Center(child: CircularProgressIndicator());
+                    return const Center(
+                        child: CircularProgressIndicator());
                   }
                   return ListView(
                       children: snap.data!.map(_node).toList());
@@ -365,6 +387,73 @@ class _FolderTreeState extends State<_FolderTree> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _TreeNode extends StatefulWidget {
+  final LibraryDb db;
+  final String path;
+  final String selected;
+  final ValueChanged<String> onSelect;
+  final Future<List<String>> Function(String) loadVisible;
+  const _TreeNode(
+      {super.key,
+      required this.db,
+      required this.path,
+      required this.selected,
+      required this.onSelect,
+      required this.loadVisible});
+
+  @override
+  State<_TreeNode> createState() => _TreeNodeState();
+}
+
+class _TreeNodeState extends State<_TreeNode> {
+  bool _expanded = false;
+  List<String>? _kids;
+
+  Future<void> _toggle() async {
+    if (!_expanded && _kids == null) {
+      _kids = await widget.loadVisible(widget.path);
+    }
+    if (!mounted) return;
+    setState(() => _expanded = !_expanded);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final name = widget.path.split('/').last;
+    return Column(
+      children: [
+        ListTile(
+          dense: true,
+          leading: const Icon(Icons.folder_outlined, size: 20),
+          title: Text(name, overflow: TextOverflow.ellipsis),
+          selected: widget.selected == widget.path,
+          selectedTileColor: Colors.white12,
+          onTap: () => widget.onSelect(widget.path),
+          trailing: IconButton(
+            icon: Icon(_expanded
+                ? Icons.expand_less
+                : Icons.expand_more, size: 22),
+            onPressed: _toggle,
+          ),
+        ),
+        if (_expanded && _kids != null)
+          for (final k in _kids!)
+            Padding(
+              padding: const EdgeInsets.only(left: 16),
+              child: _TreeNode(
+                key: PageStorageKey(k),
+                db: widget.db,
+                path: k,
+                selected: widget.selected,
+                onSelect: widget.onSelect,
+                loadVisible: widget.loadVisible,
+              ),
+            ),
+      ],
     );
   }
 }
@@ -387,7 +476,9 @@ class _NowPlayingBar extends StatelessWidget {
               icon: Icon(state.playing ? Icons.pause : Icons.play_arrow),
               onPressed: () => state.playing ? player.pause() : player.play(),
             ),
-            IconButton(icon: const Icon(Icons.skip_next), onPressed: player.seekToNext),
+            IconButton(
+                icon: const Icon(Icons.skip_next),
+                onPressed: player.seekToNext),
             Expanded(
               child: StreamBuilder<Duration>(
                 stream: player.positionStream,
