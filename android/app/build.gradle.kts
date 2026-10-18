@@ -28,6 +28,10 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        ndk {
+            // phone is arm64-v8a; skip arm32/x86_64 native builds
+            abiFilters += "arm64-v8a"
+        }
     }
 
     buildTypes {
