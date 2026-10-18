@@ -268,9 +268,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 final track = _tracks[t];
                 final title = track['title'] ??
                     track['path'].toString().split('/').last;
-                final meta = [track['artist'], track['album']]
-                    .where((x) => x != null)
-                    .join(' · ');
+                final artist = (track['artist'] ?? '').toString();
+                final album = (track['album'] ?? '').toString();
                 return ListTile(
                   dense: true,
                   visualDensity: _compact
@@ -282,9 +281,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   leading: Icon(Icons.music_note_outlined,
                       size: _compact ? 16 : 20),
                   title: Text(
-                    _compact && meta.isNotEmpty
-                        ? '$title — $meta'
-                        : '$title',
+                    // desktop column order: artist first, then title
+                    _compact
+                        ? (artist.isNotEmpty ? '$artist — $title' : '$title')
+                        : (artist.isNotEmpty ? artist : '$title'),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -292,7 +292,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   ),
                   subtitle: _compact
                       ? null
-                      : Text(meta, maxLines: 1,
+                      : Text([title, album]
+                          .where((x) => x != null && '$x'.isNotEmpty)
+                          .join(' · '),
+                          maxLines: 1,
                           overflow: TextOverflow.ellipsis),
                   trailing: Text(_fmtDur(track['dur']),
                       style: TextStyle(
