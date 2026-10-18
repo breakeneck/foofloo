@@ -16,12 +16,14 @@ class LibraryScreen extends StatefulWidget {
   final VoidCallback onLogout;
   final ThemeMode themeMode;
   final ValueChanged<ThemeMode> onThemeChanged;
+  final bool compact;
   const LibraryScreen(
       {super.key,
       required this.client,
       required this.onLogout,
       required this.themeMode,
-      required this.onThemeChanged});
+      required this.onThemeChanged,
+      this.compact = false});
 
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();
@@ -37,6 +39,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   String _scanState = 'idle';
   bool _scanning = false;
   bool _searchVisible = false;
+  bool _compact = false;
   String _query = '';
   final _searchCtrl = TextEditingController();
   int _treeRev = 0; // bump to refresh the drawer tree after a rescan
@@ -61,6 +64,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final prefs = await SharedPreferences.getInstance();
     final savedRoot = prefs.getString('root');
     if (savedRoot != null && savedRoot.isNotEmpty) _root = savedRoot;
+    _compact = prefs.getBool('compact') ?? false;
     _dir = _root;
     Diag.instance.log('db opened, rescanning');
     await _rescan();
@@ -170,6 +174,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
           scanState: _scanState,
           themeMode: widget.themeMode,
           onThemeChanged: widget.onThemeChanged,
+          compact: _compact,
+          onCompactChanged: (v) {
+            setState(() => _compact = v);
+            SharedPreferences.getInstance()
+                .then((p) => p.setBool('compact', v));
+          },
           onRescan: () {
             Navigator.pop(context);
             _rescan();
@@ -256,15 +266,37 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   if (t > h) t--;
                 }
                 final track = _tracks[t];
+                final title = track['title'] ??
+                    track['path'].toString().split('/').last;
+                final meta = [track['artist'], track['album']]
+                    .where((x) => x != null)
+                    .join(' · ');
                 return ListTile(
                   dense: true,
-                  leading: const Icon(Icons.music_note_outlined, size: 20),
-                  title: Text(track['title'] ??
-                      track['path'].toString().split('/').last),
-                  subtitle: Text([track['artist'], track['album']]
-                      .where((x) => x != null)
-                      .join(' · ')),
-                  trailing: Text(_fmtDur(track['dur'])),
+                  visualDensity: _compact
+                      ? VisualDensity.compact
+                      : null,
+                  contentPadding: EdgeInsets.symmetric(
+                      horizontal: _compact ? 8 : 16),
+                  minLeadingWidth: _compact ? 12 : 24,
+                  leading: Icon(Icons.music_note_outlined,
+                      size: _compact ? 16 : 20),
+                  title: Text(
+                    _compact && meta.isNotEmpty
+                        ? '$title — $meta'
+                        : '$title',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: _compact ? 13 : null),
+                  ),
+                  subtitle: _compact
+                      ? null
+                      : Text(meta, maxLines: 1,
+                          overflow: TextOverflow.ellipsis),
+                  trailing: Text(_fmtDur(track['dur']),
+                      style: TextStyle(
+                          fontSize: _compact ? 12 : null)),
                   onTap: () => _play(track),
                 );
               },
@@ -295,9 +327,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
   int _headerCount() => _headerIndices().length;
 
   Widget _dirHeader(String dir) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
+        padding: EdgeInsets.fromLTRB(16, _compact ? 6 : 10, 16, 2),
         child: Text(dir,
-            style: const TextStyle(fontWeight: FontWeight.bold)),
+            style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: _compact ? 12 : null)),
       );
 
   String _fmtDur(dynamic d) {

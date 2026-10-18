@@ -10,6 +10,8 @@ class SettingsScreen extends StatelessWidget {
   final String scanState;
   final ThemeMode themeMode;
   final ValueChanged<ThemeMode> onThemeChanged;
+  final bool compact;
+  final ValueChanged<bool> onCompactChanged;
   final VoidCallback onRescan;
   final ValueChanged<String> onRootChanged;
   final VoidCallback onLogout;
@@ -20,6 +22,8 @@ class SettingsScreen extends StatelessWidget {
       required this.scanState,
       required this.themeMode,
       required this.onThemeChanged,
+      required this.compact,
+      required this.onCompactChanged,
       required this.onRescan,
       required this.onRootChanged,
       required this.onLogout});
@@ -99,6 +103,12 @@ class SettingsScreen extends StatelessWidget {
             ),
           ),
           const Divider(),
+          SwitchListTile(
+            title: const Text('Компактний список'),
+            subtitle: const Text('трек + артист в один рядок, менше відступів'),
+            value: compact,
+            onChanged: onCompactChanged,
+          ),
           ListTile(
             leading: const Icon(Icons.link),
             title: const Text('Підключення'),
