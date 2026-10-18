@@ -87,7 +87,7 @@ FILE_CHUNK = 1024 * 1024
 TOKEN = os.environ.get("FOOQT_REMOTE_TOKEN", "")
 
 # pairing: one-time codes for untrusted clients (Android app)
-PAIR_TTL = 60
+PAIR_TTL = 300
 PAIR_MAX_ATTEMPTS = 5
 PAIRS = {}          # code -> {"expires": ts, "attempts": n, "name": str}
 PAIRS_LOCK = threading.Lock()
