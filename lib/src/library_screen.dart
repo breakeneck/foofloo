@@ -76,7 +76,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
       await _db.purgeMissing([_root]);
       await _navigate(_dir);
     } catch (e) {
+      Diag.instance.log('scan failed: $e');
       if (mounted) setState(() => _scanState = 'scan failed: $e');
+      Diag.instance.flush(reason: 'scan error');
     } finally {
       if (mounted) setState(() => _scanning = false);
     }
