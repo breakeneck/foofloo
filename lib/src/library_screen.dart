@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 
 import 'api_client.dart';
+import 'diagnostics.dart';
 import 'library_db.dart';
 
 /// Drill-down browser: tap folders to descend (list updates immediately,
@@ -40,7 +41,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _boot() async {
+    Diag.instance.log('library boot: opening db');
     await _db.open();
+    Diag.instance.log('db opened, rescanning');
     await _rescan();
     await _navigate(_root);
   }
@@ -54,6 +57,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final id = DateTime.now().microsecondsSinceEpoch.toRadixString(16);
     try {
       final known = await _db.knownFingerprints();
+      Diag.instance.log('scan $id root=$_root known=${known.length}');
       await widget.client.scan(id, _root, known);
       int cursor = 0;
       while (mounted) {
