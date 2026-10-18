@@ -961,6 +961,8 @@ def _write_private(path, text):
 
 
 def _watchdog(idle_timeout):
+    if idle_timeout <= 0:
+        return  # always-on service mode: never self-exit
     while True:
         time.sleep(30)
         if time.time() - LAST_ACTIVITY > idle_timeout:
