@@ -25,20 +25,35 @@ class _FooFloAppState extends State<FooFloApp> {
   }
 
   Future<FooFloApiClient?> _restore() async {
-    final host = await _store.read(key: 'host');
-    final token = await _store.read(key: 'client_token');
+    String? host, token;
+    try {
+      host = await _store.read(key: 'host');
+      token = await _store.read(key: 'client_token');
+    } catch (e) {
+      // flutter_secure_storage can throw on some devices; a failed read
+      // must not hang the splash forever.
+      debugPrint('secure storage read failed: $e');
+      host = null;
+      token = null;
+    }
     if (host == null || token == null) return null;
     return FooFloApiClient(Uri.parse(host), token);
   }
 
   Future<void> _save(FooFloApiClient c) async {
-    await _store.write(key: 'host', value: c.base.toString());
-    await _store.write(key: 'client_token', value: c.clientToken);
+    try {
+      await _store.write(key: 'host', value: c.base.toString());
+      await _store.write(key: 'client_token', value: c.clientToken);
+    } catch (e) {
+      debugPrint('secure storage write failed: $e');
+    }
     setState(() => _session = Future.value(c));
   }
 
   Future<void> _logout() async {
-    await _store.delete(key: 'client_token');
+    try {
+      await _store.delete(key: 'client_token');
+    } catch (_) {}
     setState(() => _session = Future.value(null));
   }
 
