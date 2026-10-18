@@ -97,9 +97,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Future<void> _play(Map track) async {
     final uri = widget.client.fileUri(track['path'] as String);
-    await _player.setAudioSource(
-        AudioSource.uri(uri, headers: widget.client.audioHeaders));
-    await _player.play();
+    Diag.instance.log('play: ${track['path']}');
+    try {
+      await _player.setAudioSource(
+          AudioSource.uri(uri, headers: widget.client.audioHeaders));
+      await _player.play();
+      Diag.instance.log('play: started ok');
+    } catch (e) {
+      Diag.instance.log('play FAILED: $e');
+      Diag.instance.flush(reason: 'play error');
+    }
   }
 
   String _label(String path) {
