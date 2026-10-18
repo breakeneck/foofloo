@@ -76,6 +76,23 @@ class LibraryDb {
         orderBy: 'title COLLATE NOCASE');
   }
 
+  /// All tracks under dir recursively (desktop getAllByPath behaviour).
+  Future<List<Map>> tracksUnder(String dir) async {
+    final like = '${dir.replaceAll('%', r'\%')}/%';
+    return _db.query('tracks',
+        where: 'path LIKE ?', whereArgs: [like],
+        orderBy: 'path COLLATE NOCASE, title COLLATE NOCASE');
+  }
+
+  /// Track count anywhere in dir's subtree — used to hide empty folders
+  /// from the tree, like the desktop client does with leaf_dirs.
+  Future<int> countUnder(String dir) async {
+    final like = '${dir.replaceAll('%', r'\%')}/%';
+    final r = await _db.rawQuery(
+        'SELECT COUNT(*) c FROM tracks WHERE path LIKE ?', [like]);
+    return r.first['c'] as int;
+  }
+
   Future<List<String>> subDirs(String dir) async {
     final rows = await _db.query('dirs', columns: ['path']);
     final prefix = dir == '/' ? '/' : '$dir/';

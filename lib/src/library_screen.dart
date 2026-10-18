@@ -5,8 +5,9 @@ import 'api_client.dart';
 import 'diagnostics.dart';
 import 'library_db.dart';
 
-/// Drill-down browser: tap folders to descend (list updates immediately,
-/// like the desktop), tap a track to play. Bottom bar = now playing.
+/// Desktop-like layout: left folder tree (hidden behind a slide-in drawer),
+/// main list shows ALL tracks under the selected dir recursively, grouped by
+/// last folder — same as FooQt's playlist with dir header rows.
 class LibraryScreen extends StatefulWidget {
   final FooFloApiClient client;
   final VoidCallback onLogout;
@@ -20,12 +21,13 @@ class LibraryScreen extends StatefulWidget {
 class _LibraryScreenState extends State<LibraryScreen> {
   final _db = LibraryDb();
   final _player = AudioPlayer();
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
   String _root = '/home/server/hdd/media/Music';
   String _dir = '/home/server/hdd/media/Music';
   List<Map> _tracks = [];
-  List<String> _dirs = [];
   String _scanState = 'idle';
   bool _scanning = false;
+  String _query = '';
 
   @override
   void initState() {
@@ -85,14 +87,24 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _navigate(String dir) async {
-    final tracks = await _db.tracksIn(dir);
-    final dirs = await _db.subDirs(dir);
+    var tracks = await _db.tracksUnder(dir);
+    if (_query.isNotEmpty) {
+      final q = _query.toLowerCase();
+      tracks = tracks
+          .where((t) =>
+              (t['title'] ?? '').toString().toLowerCase().contains(q) ||
+              (t['artist'] ?? '').toString().toLowerCase().contains(q))
+          .toList();
+    }
     if (!mounted) return;
     setState(() {
       _dir = dir;
       _tracks = tracks;
-      _dirs = dirs;
     });
+    // close the drawer after picking a folder
+    if (_scaffoldKey.currentState?.isDrawerOpen == true) {
+      Navigator.pop(context);
+    }
   }
 
   Future<void> _play(Map track) async {
@@ -109,9 +121,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
-  String _label(String path) {
-    final name = path.split('/').last;
-    return name.length > 40 ? '${name.substring(0, 37)}…' : name;
+  /// Group label relative to root, like desktop get_short_dir_name.
+  String _shortDir(String path) {
+    final idx = path.lastIndexOf('/');
+    final dir = idx <= 0 ? '/' : path.substring(0, idx);
+    if (dir == _root) return _root.split('/').last;
+    if (dir.startsWith('$_root/')) return dir.substring(_root.length + 1);
+    return dir.split('/').last;
   }
 
   void _changeRoot() {
@@ -140,8 +156,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      key: _scaffoldKey,
+      drawer: _FolderTree(
+        db: _db,
+        root: _root,
+        selected: _dir,
+        onSelect: _navigate,
+      ),
       appBar: AppBar(
-        title: Text(_dir == _root ? 'Library' : _label(_dir)),
+        title: Text(_dir == _root ? 'Library' : _shortDir('$_dir/x')),
         actions: [
           IconButton(icon: const Icon(Icons.refresh), onPressed: _rescan),
           IconButton(icon: const Icon(Icons.settings), onPressed: _changeRoot),
@@ -170,35 +193,177 @@ class _LibraryScreenState extends State<LibraryScreen> {
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: Text(_scanState, style: Theme.of(context).textTheme.bodySmall),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+            child: Row(children: [
+              IconButton(
+                icon: const Icon(Icons.menu),
+                onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+              ),
+              Expanded(
+                child: TextField(
+                  onChanged: (v) {
+                    _query = v.trim();
+                    _navigate(_dir);
+                  },
+                  decoration: const InputDecoration(
+                      hintText: 'Пошук…', isDense: true),
+                ),
+              ),
+            ]),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(_scanState,
+                  style: Theme.of(context).textTheme.bodySmall),
+            ),
           ),
           Expanded(
-            child: ListView(
-              children: [
-                if (_dir != _root && _dir.contains('/'))
-                  ListTile(
-                      leading: const Icon(Icons.arrow_upward),
-                      title: const Text('..'),
-                      onTap: () =>
-                          _navigate(_dir.substring(0, _dir.lastIndexOf('/')))),
-                for (final d in _dirs)
-                  ListTile(
-                      leading: const Icon(Icons.folder_outlined),
-                      title: Text(_label(d)),
-                      onTap: () => _navigate(d)),
-                for (final t in _tracks)
-                  ListTile(
-                      leading: const Icon(Icons.music_note_outlined),
-                      title: Text(t['title'] ?? _label(t['path'] as String)),
-                      subtitle: Text(
-                          [t['artist'], t['album']].where((x) => x != null).join(' · ')),
-                      onTap: () => _play(t)),
-              ],
+            child: ListView.builder(
+              itemCount: _tracks.length + _headerCount(),
+              itemBuilder: (context, i) {
+                final headers = _headerIndices();
+                // shift index past header rows
+                int t = i;
+                for (final h in headers) {
+                  if (t == h) return _dirHeader(_shortDir(_tracks[t]['path'] as String));
+                  if (t > h) t--;
+                }
+                final track = _tracks[t];
+                return ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.music_note_outlined, size: 20),
+                  title: Text(track['title'] ??
+                      track['path'].toString().split('/').last),
+                  subtitle: Text([track['artist'], track['album']]
+                      .where((x) => x != null)
+                      .join(' · ')),
+                  trailing: Text(_fmtDur(track['dur'])),
+                  onTap: () => _play(track),
+                );
+              },
             ),
           ),
           _NowPlayingBar(player: _player),
         ],
+      ),
+    );
+  }
+
+  /// Indices (in shifted coords) where a new folder group starts.
+  List<int> _headerIndices() {
+    final out = <int>[];
+    String cur = '';
+    int pos = 0;
+    for (final t in _tracks) {
+      final d = _shortDir(t['path'] as String);
+      if (d != cur) {
+        cur = d;
+        out.add(pos);
+      }
+      pos++;
+    }
+    return out;
+  }
+
+  int _headerCount() => _headerIndices().length;
+
+  Widget _dirHeader(String dir) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
+        child: Text(dir,
+            style: const TextStyle(fontWeight: FontWeight.bold)),
+      );
+
+  String _fmtDur(dynamic d) {
+    if (d == null) return '';
+    final s = (d as num).toInt();
+    return '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
+  }
+}
+
+/// Slide-in folder tree, desktop-style: full hierarchy under the root,
+/// folders with no tracks in their subtree are hidden.
+class _FolderTree extends StatefulWidget {
+  final LibraryDb db;
+  final String root;
+  final String selected;
+  final ValueChanged<String> onSelect;
+  const _FolderTree(
+      {required this.db,
+      required this.root,
+      required this.selected,
+      required this.onSelect});
+
+  @override
+  State<_FolderTree> createState() => _FolderTreeState();
+}
+
+class _FolderTreeState extends State<_FolderTree> {
+  late final Future<List<String>> _rootsFuture = _loadRoots();
+
+  Future<List<String>> _loadRoots() async {
+    final subs = await widget.db.subDirs(widget.root);
+    final visible = <String>[];
+    for (final d in subs) {
+      if (await widget.db.countUnder(d) > 0) visible.add(d);
+    }
+    return visible;
+  }
+
+  Widget _node(String path) {
+    final name = path.split('/').last;
+    return FutureBuilder<List<String>>(
+      future: widget.db.subDirs(path).then((subs) async {
+        final vis = <String>[];
+        for (final d in subs) {
+          if (await widget.db.countUnder(d) > 0) vis.add(d);
+        }
+        return vis;
+      }),
+      builder: (context, snap) {
+        final kids = snap.data ?? <String>[];
+        return ExpansionTile(
+          key: PageStorageKey(path),
+          leading: const Icon(Icons.folder_outlined, size: 20),
+          title: Text(name, overflow: TextOverflow.ellipsis),
+          backgroundColor:
+              widget.selected == path ? Colors.white12 : null,
+          onExpansionChanged: (_) {},
+          children: kids.map(_node).toList(),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Drawer(
+      child: SafeArea(
+        child: Column(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.home_outlined),
+              title: Text(widget.root.split('/').last,
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+              selected: widget.selected == widget.root,
+              onTap: () => widget.onSelect(widget.root),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: FutureBuilder<List<String>>(
+                future: _rootsFuture,
+                builder: (context, snap) {
+                  if (!snap.hasData) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  return ListView(
+                      children: snap.data!.map(_node).toList());
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
